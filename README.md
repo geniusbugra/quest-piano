@@ -37,7 +37,7 @@ Quest Piano is a mixed reality instrument built around Quest's hand tracking. Th
 | WebXR scene, hand probes, velocity, occluders, sound, MIDI out | `main.js` |
 | Static server + WebSocket → virtual MIDI port (teVirtualMIDI) | `midi_bridge.py` |
 
-Built with three.js (WebXR) and the Web Audio API. The bridge accepts only well-formed note on/off messages.
+Built with three.js (WebXR) and the Web Audio API. The bridge accepts only well-formed note on/off and control change messages.
 
 ## Tests
 
