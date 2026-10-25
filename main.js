@@ -3,6 +3,7 @@ import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildKeys, keyAt, WHITE_W, WHITE_L } from './keys.js';
+import { CHORDS, chordAt, crossed, pluck, STRING_Y, NECK_START, ZONE } from './guitar.js';
 
 // ---------- Sound
 const audio = new AudioContext();
@@ -159,8 +160,8 @@ document.body.append(renderer.domElement, ARButton.createButton(renderer, { opti
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 20);
-camera.position.set(-0.15, 1.5, 1.05);
-camera.lookAt(-0.15, 1, -0.2);
+camera.position.set(0.1, 1.6, 1.3);
+camera.lookAt(0.1, 1, -0.4);
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -218,21 +219,20 @@ const bankW = 4 * PAD + 5 * GAP, bankD = 3 * PAD + 4 * GAP;
 const bankX = -OUTER / 2 - 0.01 - bankW / 2, bankFront = WHITE_L + 0.012;
 part(bankW, 0.04, bankD, bankX, -0.02, bankFront - bankD / 2);
 
-function label(text) {
+// A w × h metre plane with centred white text, facing +z.
+function label(text, w, h = w) {
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
+  canvas.width = 256;
+  canvas.height = Math.round(256 * h / w);
   const g = canvas.getContext('2d');
   g.fillStyle = '#fff';
-  g.font = 'bold 20px system-ui, sans-serif';
+  g.font = 'bold 40px system-ui, sans-serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.fillText(text, 64, 64);
+  g.fillText(text, canvas.width / 2, canvas.height / 2);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(PAD * 0.9, PAD * 0.9), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-  m.rotation.x = -Math.PI / 2;
-  m.position.y = PAD_H / 2 + 0.0005;
-  return m;
+  return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
 }
 const pads = [...DRUMS, ...EFFECTS].map((def, n) => {
   const col = n % 4, row = Math.floor(n / 4); // row 0 is nearest to you
@@ -244,7 +244,9 @@ const pads = [...DRUMS, ...EFFECTS].map((def, n) => {
   pad.restY = PAD_H / 2;
   pad.mesh.position.set(pad.x, pad.restY, pad.z + PAD / 2);
   pad.mesh.castShadow = pad.mesh.receiveShadow = true;
-  const text = label(def.label);
+  const text = label(def.label, PAD * 0.9);
+  text.rotation.x = -Math.PI / 2;
+  text.position.y = PAD_H / 2 + 0.0005;
   pad.mesh.userData.key = text.userData.key = pad;
   pad.mesh.add(text);
   piano.add(pad.mesh);
@@ -266,6 +268,86 @@ ground.rotation.x = -Math.PI / 2;
 ground.position.set(-(bankW + 0.01) / 2, -0.0505, 0.07);
 ground.receiveShadow = true;
 piano.add(ground);
+
+// ---------- Guitar (chord mode): pinch its neck to pick it up. The body floats in front of you,
+// the neck points at the holding hand, and how far up the neck that hand is picks the chord.
+// The other hand strums across the strings over the sound hole. Hold a pinch for 1 s to put it down.
+const guitar = new THREE.Group();
+guitar.matrixAutoUpdate = false;
+scene.add(guitar);
+const wood = new THREE.MeshPhysicalMaterial({ color: 0xb8692a, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.08 });
+const darkWood = new THREE.MeshPhysicalMaterial({ color: 0x2b1a10, roughness: 0.5, clearcoat: 0.4 });
+const metal = new THREE.MeshStandardMaterial({ color: 0xd9d4c7, metalness: 1, roughness: 0.25 });
+function gpart(geo, mat, x, y, z) {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  guitar.add(m);
+  return m;
+}
+for (const [r, x] of [[0.19, -0.22], [0.145, 0.02]]) {                      // lower and upper bout
+  gpart(new THREE.CylinderGeometry(r, r, 0.09, 48), wood, x, 0, -0.045).rotation.x = Math.PI / 2;
+}
+gpart(new THREE.CircleGeometry(0.045, 32), new THREE.MeshBasicMaterial({ color: 0x0a0604 }), -0.02, 0, 0.001); // sound hole
+gpart(new THREE.RingGeometry(0.047, 0.055, 32), metal, -0.02, 0, 0.001);    // rosette
+gpart(new THREE.BoxGeometry(0.02, 0.07, 0.008), darkWood, -0.25, 0, 0.004);  // bridge
+gpart(new THREE.BoxGeometry(0.65, 0.05, 0.025), darkWood, 0.475, 0, -0.004); // neck + fretboard
+gpart(new THREE.BoxGeometry(0.16, 0.075, 0.02), darkWood, 0.88, 0, -0.006);  // headstock
+
+const chordZones = CHORDS.map((chord, c) => {
+  const x = NECK_START + (c + 0.5) * ZONE;
+  const mat = new THREE.MeshBasicMaterial({ color: [0xff453a, 0xff9f0a, 0xffd60a, 0x30d158, 0x64d2ff, 0xbf5af2][c], transparent: true, opacity: 0.25 });
+  const zone = gpart(new THREE.PlaneGeometry(ZONE - 0.004, 0.048), mat, x, 0, 0.0095);
+  const text = label(chord.name, ZONE - 0.004, 0.048);
+  text.position.z = 0.0005;
+  zone.add(text);
+  gpart(new THREE.BoxGeometry(0.002, 0.05, 0.003), metal, x - ZONE / 2, 0, 0.009); // fret wire
+  zone.userData.chord = text.userData.chord = c;
+  return mat;
+});
+const strings = STRING_Y.map((y, s) => {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xe8e0d0, metalness: 1, roughness: 0.3, emissive: 0xfff2c0, emissiveIntensity: 0 });
+  const m = gpart(new THREE.CylinderGeometry(0.0012 - s * 0.00012, 0.0012 - s * 0.00012, 1.04, 6), mat, 0.27, y, 0.014);
+  m.rotation.z = Math.PI / 2;
+  m.userData.string = s;
+  return mat;
+});
+
+const held = { hand: -1, since: 0 };        // hand holding the neck (-1: resting by the piano)
+let chord = CHORDS.length - 1;
+const restMatrix = new THREE.Matrix4()       // lying flat right of the piano, neck pointing away
+  .makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0))
+  .setPosition(OUTER / 2 + 0.3, 0.04, 0);
+const guitarInverse = new THREE.Matrix4();
+
+const guitarBuffers = {}, ringing = [], lastNote = [];
+function pluckString(s, velocity) {
+  const midi = CHORDS[chord].notes[s];
+  if (midi == null) return;
+  strings[s].emissiveIntensity = 1;
+  if (MIDI) { // guitar on channel 2, so it can drive its own instrument in the DAW
+    if (lastNote[s] != null) sendMidi([0x81, lastNote[s], 0]);
+    sendMidi([0x91, midi, Math.max(1, Math.round(velocity * 127))]);
+    lastNote[s] = midi;
+    return;
+  }
+  if (!guitarBuffers[midi]) {
+    const wave = pluck(440 * 2 ** ((midi - 69) / 12), audio.sampleRate);
+    guitarBuffers[midi] = audio.createBuffer(1, wave.length, audio.sampleRate);
+    guitarBuffers[midi].copyToChannel(wave, 0);
+  }
+  const now = audio.currentTime;
+  if (ringing[s]) { // a string rings one note at a time
+    ringing[s].gain.gain.setTargetAtTime(0, now, 0.02);
+    ringing[s].src.stop(now + 0.15);
+  }
+  const src = audio.createBufferSource(), gain = audio.createGain();
+  src.buffer = guitarBuffers[midi];
+  gain.gain.value = velocity * 0.7;
+  src.connect(gain).connect(fx);
+  src.start();
+  ringing[s] = { src, gain };
+}
 
 function press(k, speed) {
   if (k.down++) return;
@@ -300,7 +382,10 @@ let mouseKey = null;
 renderer.domElement.addEventListener('pointerdown', e => {
   ndc.set(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  mouseKey = ray.intersectObjects(targets.map(k => k.mesh))[0]?.object.userData.key ?? null;
+  const hit = ray.intersectObjects([...targets.map(k => k.mesh), guitar])[0]?.object.userData ?? {};
+  if (hit.chord != null) chord = hit.chord;
+  if (hit.string != null) pluckString(hit.string, 0.6);
+  mouseKey = hit.key ?? null;
   if (mouseKey) press(mouseKey, 0.35);
 });
 addEventListener('pointerup', () => { if (mouseKey) release(mouseKey); mouseKey = null; });
@@ -329,14 +414,26 @@ for (let i = 0; i < 2; i++) {
   ctrl.add(marker);
   ctrl.addEventListener('connected', e => { ctrl.userData.isHand = !!e.data.hand; marker.visible = !e.data.hand; });
   ctrl.addEventListener('selectstart', () => {
+    ctrl.userData.pinchAt = performance.now();
     const p = pinchPos(i, new THREE.Vector3());
     if (!p) return;
+    if (held.hand < 0) {
+      const g = p.clone().applyMatrix4(guitarInverse.copy(guitar.matrixWorld).invert());
+      if (g.x > 0.1 && g.x < 0.97 && Math.abs(g.y) < 0.06 && Math.abs(g.z) < 0.08) { // pinched the neck
+        held.hand = i;
+        held.since = performance.now();
+        return;
+      }
+    }
     const local = piano.worldToLocal(p.clone());
     const onFallboard = Math.abs(local.x) <= OUTER / 2 && local.z > -0.08 && local.z < 0.01 && local.y > -0.03 && local.y < 0.1;
     // Keep the grab point under your fingers, so grabbing the middle brings the middle to you.
     if (onFallboard) drag = { i, local };
   });
-  ctrl.addEventListener('selectend', () => { if (drag?.i === i) drag = null; });
+  ctrl.addEventListener('selectend', () => {
+    ctrl.userData.pinchAt = 0;
+    if (drag?.i === i) drag = null;
+  });
 
   for (const tip of TIPS) {
     probes.push({ pos: v => {
@@ -392,9 +489,64 @@ function updateOccluders() {
   }
 }
 
+// ---------- Guitar each frame: follow the holding hand, pick the chord, detect strums
+const STRUM_TIPS = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip'];
+const strumPrev = [], lastPluck = [];
+const gx = new THREE.Vector3(), gy = new THREE.Vector3(), gz = new THREE.Vector3(), anchor = new THREE.Vector3();
+const grip = new THREE.Vector3(), tip = new THREE.Vector3(), upward = new THREE.Vector3(0, 1, 0);
+function handPoint(i, v) { // where a hand holds the neck: its middle knuckle, or the controller tip
+  const ctrl = renderer.xr.getController(i);
+  if (!ctrl.userData.isHand) return ctrl.visible ? ctrl.localToWorld(v.copy(CTRL_TIP)) : null;
+  const j = renderer.xr.getHand(i).joints['middle-finger-phalanx-proximal'];
+  return j?.visible ? j.getWorldPosition(v) : null;
+}
+function updateGuitar(pose, dt) {
+  const holder = held.hand >= 0 && renderer.xr.getController(held.hand);
+  if (holder && holder.userData.pinchAt > held.since && performance.now() - holder.userData.pinchAt > 1000) held.hand = -1; // long pinch puts it down
+  if (held.hand < 0) {
+    guitar.matrix.multiplyMatrices(piano.matrixWorld, restMatrix);
+  } else if (pose && handPoint(held.hand, grip)) { // a lost hand keeps the guitar where it was
+    // Body in front of your chest, neck pointing at the holding hand, top tilted up so you see the strings.
+    fwd.set(0, 0, -1).applyQuaternion(quat.copy(pose.transform.orientation)).setY(0).normalize();
+    gy.crossVectors(fwd, upward); // your right
+    anchor.copy(head).addScaledVector(upward, -0.45).addScaledVector(fwd, 0.22).addScaledVector(gy, 0.08);
+    gx.subVectors(grip, anchor).normalize();
+    gz.copy(fwd).addScaledVector(upward, 1.2);
+    gz.addScaledVector(gx, -gz.dot(gx)).normalize();
+    gy.crossVectors(gz, gx);
+    guitar.matrix.makeBasis(gx, gy, gz).setPosition(anchor);
+    chord = chordAt(grip.distanceTo(anchor));
+  }
+  guitar.matrixWorldNeedsUpdate = true;
+  guitar.updateMatrixWorld();
+  chordZones.forEach((mat, c) => { mat.opacity = c === chord ? 0.9 : 0.25; });
+  for (const mat of strings) mat.emissiveIntensity = Math.max(0, mat.emissiveIntensity - dt * 5);
+  if (held.hand < 0) return;
+
+  guitarInverse.copy(guitar.matrixWorld).invert();
+  const strummer = 1 - held.hand, hand = renderer.xr.getHand(strummer), sctrl = renderer.xr.getController(strummer);
+  for (let n = 0; n < STRUM_TIPS.length; n++) {
+    const j = hand.joints[STRUM_TIPS[n]];
+    const found = sctrl.userData.isHand ? j?.visible && j.getWorldPosition(tip)
+      : n === 0 && sctrl.visible && sctrl.localToWorld(tip.copy(CTRL_TIP));
+    if (!found) { strumPrev[n] = undefined; continue; }
+    tip.applyMatrix4(guitarInverse);
+    const over = tip.x > -0.13 && tip.x < 0.08 && tip.z > -0.01 && tip.z < 0.05 && Math.abs(tip.y) < 0.08; // over the sound hole
+    if (over && strumPrev[n] !== undefined) {
+      const speed = Math.abs(tip.y - strumPrev[n]) / dt;
+      for (const s of crossed(strumPrev[n], tip.y)) {
+        if (performance.now() - (lastPluck[s] || 0) < 50) continue; // fingertips crossing together pluck once
+        lastPluck[s] = performance.now();
+        pluckString(s, THREE.MathUtils.clamp(speed / 1.2, 0.3, 1)); // faster strum = louder
+      }
+    }
+    strumPrev[n] = over ? tip.y : undefined;
+  }
+}
+
 // ---------- Loop
 let last = 0, placed = false;
-renderer.xr.addEventListener('sessionstart', () => { placed = false; });
+renderer.xr.addEventListener('sessionstart', () => { placed = false; held.hand = -1; });
 const head = new THREE.Vector3(), fwd = new THREE.Vector3(), quat = new THREE.Quaternion();
 const p = new THREE.Vector3(), tmp = new THREE.Vector3();
 
@@ -431,6 +583,7 @@ renderer.setAnimationLoop((t, frame) => {
     pad.mat.emissiveIntensity = pad.play ? Math.max(0.06, pad.glow) : pad.on ? 1 : 0.1;
   }
   piano.updateMatrixWorld();
+  updateGuitar(pose, dt);
 
   for (const probe of probes) {
     let key = null, speed = 0;

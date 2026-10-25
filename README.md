@@ -11,7 +11,9 @@ Quest Piano is a mixed reality instrument built around Quest's hand tracking. Th
 - **Real size, real feel.** 88 keys (A0–C8) at true piano dimensions. The keys pivot like a real action. A sampled grand piano plays through the headset.
 - **Your hands stay in front.** Depth-only hand occluders let your real fingers render over the virtual keys, so you see your own hands on the keyboard.
 - **Put it where you play.** Pinch anywhere on the back panel to carry the piano onto a real desk. It always turns to face you.
-- **A MIDI controller for any DAW.** A small desktop bridge opens a virtual MIDI input called "Quest Piyano". FL Studio, Ableton Live, Reaper and others see it as a regular keyboard.
+- **Drum pads and effect switches.** Eight light-up drum pads sit next to the keys. Four touch switches turn on reverb, delay, a lo-fi filter and a sustain pedal.
+- **A guitar you hold in your hands.** Pinch the guitar's neck to pick it up. Slide your neck hand along it to change chords (C, G, Am, F, Em, D) and strum the strings with your other hand. The string sound is synthesized with Karplus-Strong. To put the guitar down, hold a pinch for one second.
+- **A MIDI controller for any DAW.** Piano on channel 1, guitar on channel 2, drums on channel 10 (General MIDI), sustain as CC64. A small desktop bridge opens a virtual MIDI input called "Quest Piyano". FL Studio, Ableton Live, Reaper and others see it as a regular keyboard.
 - **No install on the headset.** It runs in the Quest browser with WebXR. You open a link and play.
 
 ## Try it
@@ -31,6 +33,7 @@ Quest Piano is a mixed reality instrument built around Quest's hand tracking. Th
 | Part | File |
 |------|------|
 | Key layout and fingertip hit test with hysteresis | `keys.js` |
+| Guitar chords, strum detection, Karplus-Strong string | `guitar.js` |
 | WebXR scene, hand probes, velocity, occluders, sound, MIDI out | `main.js` |
 | Static server + WebSocket → virtual MIDI port (teVirtualMIDI) | `midi_bridge.py` |
 
@@ -38,7 +41,7 @@ Built with three.js (WebXR) and the Web Audio API. The bridge accepts only well-
 
 ## Tests
 
-- `npm test` checks the key layout and the fingertip hit logic.
+- `npm test` checks the key layout, the fingertip hit logic, guitar chords, strum detection and the string synth.
 - `python midi_bridge_test.py` (while the bridge runs) listens on the MIDI port like a DAW and checks that notes arrive and junk is dropped.
 
 ## Credits
