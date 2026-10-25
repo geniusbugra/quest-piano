@@ -4,6 +4,8 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildKeys, keyAt, WHITE_W, WHITE_L } from './keys.js';
 import { CHORDS, chordAt, crossed, pluck, STRING_Y, NECK_START, ZONE, SADDLE, NUT, SCALE } from './guitar.js';
+import { marimbaBars, thereminPitch, thereminVolume } from './instruments.js';
+import { SONGS, parseMidi } from './songs.js';
 
 // ---------- Sound
 const audio = new AudioContext();
@@ -151,11 +153,47 @@ const EFFECTS = [
   { label: 'SUSTAIN', color: 0xffd60a, set: setSustain },
 ];
 
+// Marimba: a struck bar is a sine at the pitch plus the 4th harmonic it is tuned to, and a short mallet click.
+const hz = midi => 440 * 2 ** ((midi - 69) / 12);
+function marimbaNote(midi, v) {
+  const ring = 1.4 - (midi - 57) * 0.025; // low bars ring longer
+  for (const [mult, level, seconds] of [[1, 0.6, ring], [4, 0.15, ring * 0.3]]) {
+    const osc = audio.createOscillator(), t = audio.currentTime;
+    osc.frequency.value = hz(midi) * mult;
+    decay(osc, v * level, seconds);
+    osc.start(t);
+    osc.stop(t + seconds);
+  }
+  noise('bandpass', hz(midi) * 3, v * 0.12, 0.03);
+}
+
+// Theremin: one continuous voice (sine + soft triangle, gentle vibrato), started the first time it is used.
+let thereminVoice = null;
+function theremin() {
+  if (thereminVoice) return thereminVoice;
+  const osc = audio.createOscillator(), soft = audio.createOscillator(), softGain = audio.createGain();
+  const lfo = audio.createOscillator(), lfoDepth = audio.createGain(), gain = audio.createGain();
+  soft.type = 'triangle';
+  softGain.gain.value = 0.25;
+  lfo.frequency.value = 5.5;
+  lfoDepth.gain.value = 3;
+  lfo.connect(lfoDepth);
+  lfoDepth.connect(osc.frequency);
+  lfoDepth.connect(soft.frequency);
+  gain.gain.value = 0;
+  osc.connect(gain);
+  soft.connect(softGain).connect(gain);
+  gain.connect(fx);
+  for (const o of [osc, soft, lfo]) o.start();
+  return (thereminVoice = { osc, soft, gain });
+}
+
 // ---------- Scene
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); // alpha = passthrough shows behind
 renderer.setPixelRatio(devicePixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
+renderer.xr.setFoveation(1); // Quest renders the edges of the view at lower resolution: big GPU saving
 document.body.append(renderer.domElement, ARButton.createButton(renderer, { optionalFeatures: ['hand-tracking', 'local-floor'] }));
 
 const scene = new THREE.Scene();
@@ -200,15 +238,17 @@ part(width * 0.6, 0.0015, 0.001, 0, 0.055, -0.0098,
   new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 1, roughness: 0.3 }), 0); // gold pinstripe
 
 const KEY_H = 0.02;
-const ivory = { color: 0xf3efe6, roughness: 0.35, clearcoat: 0.3, clearcoatRoughness: 0.2 };
-const ebony = { color: 0x0b0b0b, roughness: 0.25, clearcoat: 0.6, clearcoatRoughness: 0.1 };
+// Standard (not physical) materials and no key shadows: 88 keys stay cheap for the Quest GPU.
+const ivory = { color: 0xf3efe6, roughness: 0.3 };
+const ebony = { color: 0x0b0b0b, roughness: 0.22 };
+const whiteGeo = new RoundedBoxGeometry(WHITE_W - 0.001, KEY_H, WHITE_L, 2, 0.0015).translate(0, 0, WHITE_L / 2);
+const blackGeo = new RoundedBoxGeometry(keys.find(k => k.black).width - 0.001, KEY_H, keys.find(k => k.black).length, 2, 0.002)
+  .translate(0, 0, keys.find(k => k.black).length / 2); // origin at the back edge: keys pivot like a real action
 for (const k of keys) {
   k.down = 0;
-  const geo = new RoundedBoxGeometry(k.width - 0.001, KEY_H, k.length, 2, k.black ? 0.002 : 0.0015);
-  geo.translate(0, 0, k.length / 2); // origin at the back edge: keys pivot like a real action
-  k.mesh = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial(k.black ? ebony : ivory));
+  k.mesh = new THREE.Mesh(k.black ? blackGeo : whiteGeo, new THREE.MeshStandardMaterial(k.black ? ebony : ivory));
   k.mesh.position.set(k.x, k.top - KEY_H / 2, 0);
-  k.mesh.castShadow = k.mesh.receiveShadow = true;
+  k.mesh.receiveShadow = true;
   k.mesh.userData.key = k;
   piano.add(k.mesh);
 }
@@ -217,7 +257,7 @@ for (const k of keys) {
 const PAD = 0.052, GAP = 0.008, PAD_H = 0.012;
 const bankW = 4 * PAD + 5 * GAP, bankD = 3 * PAD + 4 * GAP;
 const bankX = -OUTER / 2 - 0.01 - bankW / 2, bankFront = WHITE_L + 0.012;
-part(bankW, 0.04, bankD, bankX, -0.02, bankFront - bankD / 2);
+const bank = part(bankW, 0.04, bankD, bankX, -0.02, bankFront - bankD / 2);
 
 // A w × h metre plane with centred white text, facing +z.
 function label(text, w, h = w) {
@@ -226,7 +266,8 @@ function label(text, w, h = w) {
   canvas.height = Math.round(256 * h / w);
   const g = canvas.getContext('2d');
   g.fillStyle = '#fff';
-  g.font = 'bold 40px system-ui, sans-serif';
+  let size = 40;
+  do g.font = `bold ${size--}px system-ui, sans-serif`; while (g.measureText(text).width > canvas.width * 0.9 && size > 10);
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillText(text, canvas.width / 2, canvas.height / 2);
@@ -252,7 +293,6 @@ const pads = [...DRUMS, ...EFFECTS].map((def, n) => {
   piano.add(pad.mesh);
   return pad;
 });
-const targets = [...keys, ...pads];
 
 // A soft contact shadow under the piano grounds it on your real table.
 const sun = new THREE.DirectionalLight(0xffffff, 1.2);
@@ -404,9 +444,304 @@ function pluckString(s, velocity) {
   ringing[s] = { src, gain };
 }
 
+// A w × h metre panel whose text can change: panel.userData.show(['Title', 'line 2', ...]).
+function textPanel(w, h) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = Math.round(512 * h / w);
+  const g = canvas.getContext('2d'), tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+  let shown = '';
+  mesh.userData.show = lines => {
+    if (lines.join('\n') === shown) return; // redraw only on change
+    shown = lines.join('\n');
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.fillStyle = 'rgba(12, 14, 22, 0.85)';
+    g.beginPath();
+    g.roundRect(0, 0, canvas.width, canvas.height, 28);
+    g.fill();
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    lines.forEach((line, n) => {
+      const size = canvas.height / (lines.length + 0.6) * (n ? 0.55 : 0.75);
+      g.font = `${n ? '' : 'bold '}${Math.round(size)}px system-ui, sans-serif`;
+      g.fillStyle = n ? '#b8c0d8' : '#fff';
+      g.fillText(line, canvas.width / 2, canvas.height * (n + 0.8) / (lines.length + 0.6));
+    });
+    tex.needsUpdate = true;
+  };
+  return mesh;
+}
+
+// ---------- Marimba: rosewood bars over brass resonators. Strike the bars from above with your fingertips.
+const marimba = new THREE.Group();
+marimba.visible = false;
+scene.add(marimba);
+const bars = marimbaBars(57, 84); // A3–C6
+const brass = new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 1, roughness: 0.3 });
+const barWood = woodTexture('#8a3b1c', '#3d1508', 160);
+const halfSpan = Math.max(...bars.map(b => Math.abs(b.x))) + 0.04;
+for (const bar of bars) {
+  Object.assign(bar, { down: 0, glow: 0, restY: bar.top - 0.011 });
+  bar.mesh = new THREE.Mesh(new RoundedBoxGeometry(bar.width, 0.022, bar.length, 2, 0.004),
+    new THREE.MeshStandardMaterial({ map: barWood, roughness: 0.45, emissive: 0xffa040, emissiveIntensity: 0 }));
+  bar.mesh.position.set(bar.x, bar.restY, bar.z + bar.length / 2);
+  bar.mesh.castShadow = true;
+  bar.mesh.userData.key = bar;
+  marimba.add(bar.mesh);
+  const tubeLen = 0.1 + 0.45 * (84 - bar.midi) / 27; // resonators shorten as pitch rises
+  const resonator = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, tubeLen, 16, 1, true), brass);
+  resonator.position.set(bar.x, bar.top - 0.045 - tubeLen / 2, bar.z + bar.length / 2);
+  marimba.add(resonator);
+  bar.onDown = v => {
+    bar.mesh.position.y = bar.restY - 0.004;
+    bar.glow = 1;
+    if (MIDI) sendMidi([0x93, bar.midi, Math.max(1, Math.round(v * 127))]); // marimba on channel 4
+    else marimbaNote(bar.midi, v);
+  };
+  bar.onUp = () => {
+    bar.mesh.position.y = bar.restY;
+    if (MIDI) sendMidi([0x83, bar.midi, 0]);
+  };
+}
+for (const [z, y] of [[0.06, -0.032], [0.19, -0.032], [-0.1, -0.007], [-0.24, -0.007]]) { // rails under both rows
+  const rail = new THREE.Mesh(new RoundedBoxGeometry(halfSpan * 2, 0.02, 0.025, 2, 0.006), rosewood);
+  rail.position.set(0, y, z);
+  marimba.add(rail);
+}
+for (const s of [-1, 1]) { // end boards: pinch one to carry the marimba
+  const end = new THREE.Mesh(new RoundedBoxGeometry(0.04, 0.1, 0.62, 2, 0.01), rosewood);
+  end.position.set(s * (halfSpan + 0.02), -0.035, -0.03);
+  marimba.add(end);
+}
+
+// ---------- Theremin: played without touching. Right hand distance to the vertical antenna sets the
+// pitch (closer = higher, snapped to the nearest semitone so it stays in tune); left hand height over
+// the loop sets the volume (lower = quieter).
+const thereminRig = new THREE.Group();
+thereminRig.visible = false;
+scene.add(thereminRig);
+thereminRig.add(new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.12, 0.2, 3, 0.012), mahogany));
+const ANTENNA = new THREE.Vector3(0.18, 0, -0.05), LOOP = new THREE.Vector3(-0.3, 0.03, 0);
+const glowMetal = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 1, roughness: 0.2, emissive: 0x66ccff, emissiveIntensity: 0 });
+const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.006, 0.5, 12), glowMetal);
+antenna.position.set(ANTENNA.x, 0.31, ANTENNA.z);
+const loop = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.004, 8, 48), glowMetal);
+loop.rotation.x = Math.PI / 2;
+loop.position.copy(LOOP);
+const loopArm = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.06), metal);
+loopArm.rotation.z = Math.PI / 2;
+loopArm.position.set(-0.24, 0.03, 0);
+const thereminDisplay = textPanel(0.3, 0.07);
+thereminDisplay.position.set(0, 0, 0.101);
+thereminRig.add(antenna, loop, loopArm, thereminDisplay);
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const noteName = midi => NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+let thereminNote = null;
+const tA = new THREE.Vector3(), tB = new THREE.Vector3();
+function updateTheremin() {
+  const now = audio.currentTime;
+  let volume = 0, pitch = null;
+  const right = handIndex('right'), left = handIndex('left');
+  if (thereminRig.visible && right >= 0 && left >= 0 && handPoint(right, tA) && handPoint(left, tB)) {
+    thereminRig.worldToLocal(tA);
+    thereminRig.worldToLocal(tB);
+    const distance = Math.hypot(tA.x - ANTENNA.x, tA.z - ANTENNA.z); // to the vertical rod
+    const overLoop = Math.hypot(tB.x - LOOP.x, tB.z - LOOP.z) < 0.25;
+    pitch = Math.round(thereminPitch(distance));
+    volume = overLoop && distance < 0.6 ? thereminVolume(tB.y - LOOP.y) : 0;
+  }
+  glowMetal.emissiveIntensity = volume;
+  if (thereminRig.visible) {
+    thereminDisplay.userData.show(pitch == null ? ['THEREMIN', 'Right hand: pitch · Left hand: volume']
+      : [noteName(pitch), volume > 0.02 ? `volume ${Math.round(volume * 100)}%` : 'Raise your left hand over the loop']);
+  }
+  if (MIDI) { // theremin on channel 3, one note at a time
+    const note = volume > 0.1 ? pitch : null;
+    if (note === thereminNote) return;
+    if (thereminNote != null) sendMidi([0x82, thereminNote, 0]);
+    if (note != null) sendMidi([0x92, note, Math.round(volume * 127)]);
+    thereminNote = note;
+    return;
+  }
+  if (!thereminVoice && volume === 0) return;
+  const voice = theremin();
+  if (pitch != null) {
+    voice.osc.frequency.setTargetAtTime(hz(pitch), now, 0.03);
+    voice.soft.frequency.setTargetAtTime(hz(pitch), now, 0.03);
+  }
+  voice.gain.gain.setTargetAtTime(volume * 0.45, now, 0.05);
+}
+
+// ---------- Song guide on the piano: the keys of the next step light up green; play them to move on.
+const guide = { on: false, song: 0, name: SONGS[0].name, steps: SONGS[0].steps, step: 0, hit: new Set(), wrong: new Map() };
+const guidePanel = textPanel(0.5, 0.075);
+guidePanel.position.set(0, 0.11, -0.026); // standing on the fallboard
+guidePanel.rotation.x = -0.25;
+guidePanel.visible = false;
+piano.add(guidePanel);
+function setGuide(on) {
+  guide.on = on;
+  guidePanel.visible = on;
+}
+function loadSong(name, steps) {
+  Object.assign(guide, { name, steps, step: 0 });
+  guide.hit.clear();
+  setGuide(true);
+}
+function nextSong() {
+  guide.song = (guide.song + 1) % SONGS.length;
+  loadSong(SONGS[guide.song].name, SONGS[guide.song].steps);
+}
+function guideKey(midi) {
+  if (!guide.on || guide.step >= guide.steps.length) return;
+  const step = guide.steps[guide.step];
+  if (!step.includes(midi)) return guide.wrong.set(midi, performance.now() + 300); // flash red
+  guide.hit.add(midi);
+  if (step.every(m => guide.hit.has(m))) {
+    guide.step++;
+    guide.hit.clear();
+  }
+}
+function updateGuide() {
+  const step = (guide.on && guide.steps[guide.step]) || [], next = (guide.on && guide.steps[guide.step + 1]) || [];
+  const now = performance.now(), pulse = 0.6 + 0.4 * Math.sin(now / 120);
+  for (const k of keys) {
+    const todo = step.includes(k.midi) && !guide.hit.has(k.midi);
+    const hex = k.down ? 0x0c1a3a : (guide.wrong.get(k.midi) ?? 0) > now ? 0x6a0000
+      : todo ? 0x12a03a : next.includes(k.midi) ? 0x063015 : 0;
+    k.mesh.material.emissive.setHex(hex);
+    k.mesh.material.emissiveIntensity = todo && !k.down ? pulse : 1;
+  }
+  if (guide.on) {
+    guidePanel.userData.show(guide.step >= guide.steps.length ? [guide.name, 'Bravo! Song complete'] : [guide.name, `${guide.step + 1} / ${guide.steps.length}`]);
+  }
+}
+
+// ---------- Showing, hiding and summoning instruments
+const view = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() }; // where you are and look, updated each frame
+const vFwd = new THREE.Vector3(), vRight = new THREE.Vector3();
+function viewBasis() {
+  vFwd.set(0, 0, -1).applyQuaternion(view.quat).setY(0);
+  if (vFwd.lengthSq() < 1e-4) vFwd.set(0, 0, -1);
+  vFwd.normalize();
+  vRight.crossVectors(vFwd, upward);
+}
+// Each instrument has its own spot in a half circle around you, so summoned instruments never pile up:
+// [height below your eyes, distance, angle to your left in radians].
+const SPOTS = new Map([[piano, [0.4, 0.5, 0]], [marimba, [0.6, 0.8, 1.2]], [thereminRig, [0.45, 0.85, -1.45]]]);
+const GUITAR_SPOT = [0.6, 0.42, -1.85]; // on a stand at your right side, neck up
+const spotDir = new THREE.Vector3();
+function spot([drop, distance, angle], target) { // world position of a spot; sets spotDir to point at it
+  viewBasis();
+  spotDir.copy(vFwd).applyAxisAngle(upward, angle);
+  return target.copy(view.pos).addScaledVector(spotDir, distance).setY(view.pos.y - drop);
+}
+function summon(obj) { // put it in its spot, facing you
+  spot(SPOTS.get(obj), obj.position);
+  obj.rotation.y = Math.atan2(-spotDir.x, -spotDir.z);
+}
+function toggle(obj) {
+  obj.visible = !obj.visible;
+  if (obj.visible) summon(obj);
+}
+function setPads(on) {
+  bank.visible = on;
+  for (const pad of pads) pad.mesh.visible = on;
+}
+function presentGuitar() { // standing in its spot like on a guitar stand: neck up, strings facing you
+  const at = spot(GUITAR_SPOT, new THREE.Vector3());
+  const facing = spotDir.clone().negate().setY(0).normalize();
+  guitar.matrix.makeBasis(upward, new THREE.Vector3().crossVectors(facing, upward), facing).setPosition(at);
+  guitarFree = true;
+  held.hand = -1;
+}
+function toggleGuitar() {
+  guitar.visible = !guitar.visible;
+  held.hand = -1;
+  if (guitar.visible) presentGuitar();
+}
+function bringHere() {
+  for (const obj of SPOTS.keys()) if (obj.visible) summon(obj);
+  if (guitar.visible) presentGuitar();
+}
+
+// ---------- Menu: in the headset, turn your left palm towards your face and it appears above your hand;
+// poke the buttons with your right index finger. On a desktop (or before entering AR) it is a toolbar.
+const MENU = [
+  { label: 'PIANO', on: () => piano.visible, act: () => toggle(piano) },
+  { label: 'PADS', on: () => bank.visible, act: () => setPads(!bank.visible) },
+  { label: 'GUITAR', on: () => guitar.visible, act: toggleGuitar },
+  { label: 'MARIMBA', on: () => marimba.visible, act: () => toggle(marimba) },
+  { label: 'THEREMIN', on: () => thereminRig.visible, act: () => toggle(thereminRig) },
+  { label: 'SONG GUIDE', on: () => guide.on, act: () => setGuide(!guide.on) },
+  { label: 'NEXT SONG', on: () => false, act: nextSong },
+  { label: 'BRING HERE', on: () => false, act: bringHere },
+];
+const menu = new THREE.Group();
+menu.visible = false;
+scene.add(menu);
+const menuBg = new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.215, 0.006, 2, 0.01),
+  new THREE.MeshStandardMaterial({ color: 0x15161c, roughness: 0.4, transparent: true, opacity: 0.92 }));
+menuBg.position.z = -0.006;
+const menuTitle = label('QUEST PIANO', 0.18, 0.025);
+menuTitle.position.set(0, 0.088, 0);
+menu.add(menuBg, menuTitle);
+const BTN_W = 0.085, BTN_H = 0.03;
+MENU.forEach((item, n) => {
+  item.mat = new THREE.MeshStandardMaterial({ color: 0x2c2f3a, roughness: 0.5, emissive: 0x0a84ff, emissiveIntensity: 0 });
+  item.mesh = new THREE.Mesh(new RoundedBoxGeometry(BTN_W, BTN_H, 0.008, 2, 0.004), item.mat);
+  item.mesh.position.set((n % 2 - 0.5) * (BTN_W + 0.01), 0.048 - Math.floor(n / 2) * (BTN_H + 0.008), 0);
+  const text = label(item.label, BTN_W, BTN_H);
+  text.position.z = 0.0045;
+  item.mesh.add(text);
+  menu.add(item.mesh);
+});
+
+const toolbar = document.createElement('div');
+toolbar.style.cssText = 'position:fixed;top:10px;left:10px;right:10px;display:flex;flex-wrap:wrap;gap:6px;font:12px system-ui,sans-serif;z-index:10';
+const buttonCss = 'padding:6px 10px;border-radius:8px;border:1px solid #444;color:#eee;cursor:pointer;';
+for (const item of MENU) {
+  item.button = document.createElement('button');
+  item.button.textContent = item.label;
+  item.button.onclick = () => { item.act(); refreshToolbar(); };
+  toolbar.append(item.button);
+}
+const midiLabel = document.createElement('label'), midiInput = document.createElement('input'), status = document.createElement('span');
+midiInput.type = 'file';
+midiInput.accept = '.mid,.midi';
+midiInput.style.display = 'none';
+midiLabel.style.cssText = buttonCss + 'background:#1f6f3a;';
+midiLabel.append('LOAD MIDI SONG', midiInput);
+status.style.cssText = 'color:#aaa;align-self:center;';
+toolbar.append(midiLabel, status);
+document.body.append(toolbar);
+function refreshToolbar() {
+  for (const item of MENU) item.button.style.cssText = buttonCss + `background:${item.on() ? '#0a84ff' : '#222'};`;
+}
+refreshToolbar();
+setInterval(refreshToolbar, 500); // reflects changes made from the in-headset menu
+midiInput.onchange = async () => {
+  const file = midiInput.files[0];
+  if (!file) return;
+  try {
+    const steps = parseMidi(await file.arrayBuffer());
+    if (!steps.length) throw new Error('no piano notes found');
+    loadSong(file.name.replace(/\.midi?$/i, ''), steps);
+    if (!piano.visible) toggle(piano);
+    status.textContent = `Loaded "${guide.name}": ${steps.length} steps`;
+  } catch (e) {
+    status.textContent = `Could not read that MIDI file (${e.message})`;
+  }
+  refreshToolbar();
+};
+
 function press(k, speed) {
   if (k.down++) return;
   const velocity = THREE.MathUtils.clamp(speed / 0.5, 0.25, 1); // faster strike = louder
+  if (k.onDown) return k.onDown(velocity);
   if (k.pad) {
     k.mesh.position.y = k.restY - 0.004;
     if (!k.play) return k.set(k.on = !k.on); // effect pads toggle
@@ -416,11 +751,12 @@ function press(k, speed) {
     return;
   }
   noteOn(k.midi, velocity);
-  k.mesh.rotation.x = 0.06; // front edge dips ~9 mm
-  k.mesh.material.emissive.setHex(0x0c1a3a);
+  guideKey(k.midi);
+  k.mesh.rotation.x = 0.06; // front edge dips ~9 mm (colour comes from updateGuide)
 }
 function release(k) {
   if (--k.down) return;
+  if (k.onUp) return k.onUp();
   if (k.pad) {
     k.mesh.position.y = k.restY;
     if (k.play && MIDI) sendMidi([0x89, k.note, 0]);
@@ -428,8 +764,20 @@ function release(k) {
   }
   noteOff(k.midi);
   k.mesh.rotation.x = 0;
-  k.mesh.material.emissive.setHex(0x000000);
 }
+
+// Everything you can play by touching, per instrument (each in its own local space), only while shown.
+const pianoTargets = [...keys, ...pads];
+const playables = [
+  { space: piano, list: () => (!piano.visible ? [] : bank.visible ? pianoTargets : keys) },
+  { space: marimba, list: () => (marimba.visible ? bars : []) },
+];
+// Pinch these parts to carry an instrument.
+const grabbables = [
+  { obj: piano, test: l => Math.abs(l.x) <= OUTER / 2 && l.z > -0.1 && l.z < 0.02 && l.y > -0.03 && l.y < 0.16 }, // back panel
+  { obj: marimba, test: l => Math.abs(l.x) > halfSpan - 0.03 && Math.abs(l.x) < halfSpan + 0.12 && l.y > -0.15 && l.y < 0.12 }, // end boards
+  { obj: thereminRig, test: l => Math.abs(l.x) < 0.25 && Math.abs(l.y) < 0.12 && Math.abs(l.z) < 0.15 }, // cabinet
+];
 
 // ---------- Desktop fallback: click keys and pads with the mouse
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -437,7 +785,8 @@ let mouseKey = null;
 renderer.domElement.addEventListener('pointerdown', e => {
   ndc.set(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  const hit = ray.intersectObjects([...targets.map(k => k.mesh), guitar])[0]?.object.userData ?? {};
+  const meshes = playables.flatMap(inst => inst.list().map(k => k.mesh));
+  const hit = ray.intersectObjects(guitar.visible ? [...meshes, guitar] : meshes)[0]?.object.userData ?? {};
   if (hit.chord != null) chord = hit.chord;
   if (hit.string != null) pluckString(hit.string, 0.6);
   mouseKey = hit.key ?? null;
@@ -464,6 +813,10 @@ function pinchPos(i, v) {
   }
   return ctrl.visible ? ctrl.localToWorld(v.copy(CTRL_TIP)) : null;
 }
+function handIndex(handedness) { // input index of the left or right hand (the order is not fixed)
+  for (const i of [0, 1]) if (renderer.xr.getController(i).userData.handedness === handedness) return i;
+  return -1;
+}
 
 for (let i = 0; i < 2; i++) {
   const hand = renderer.xr.getHand(i), ctrl = renderer.xr.getController(i);
@@ -471,11 +824,15 @@ for (let i = 0; i < 2; i++) {
   const marker = new THREE.Mesh(new THREE.SphereGeometry(0.008), tipMat);
   marker.position.copy(CTRL_TIP);
   ctrl.add(marker);
-  ctrl.addEventListener('connected', e => { ctrl.userData.isHand = !!e.data.hand; marker.visible = !e.data.hand; });
+  ctrl.addEventListener('connected', e => {
+    Object.assign(ctrl.userData, { isHand: !!e.data.hand, handedness: e.data.handedness });
+    marker.visible = !e.data.hand;
+  });
+  ctrl.addEventListener('disconnected', () => { ctrl.userData.handedness = null; });
   ctrl.addEventListener('selectstart', () => {
     const p = pinchPos(i, new THREE.Vector3());
     if (!p) return;
-    if (held.hand < 0) {
+    if (held.hand < 0 && guitar.visible) {
       const g = p.clone().applyMatrix4(guitarInverse.copy(guitar.matrixWorld).invert());
       // Generous zones: the pinch fires while the fingers are still closing, ~7 cm off the surface.
       const onNeck = g.x > 0.15 && g.x < NUT + 0.2 && Math.abs(g.y) < 0.08 && g.z > -0.08 && g.z < 0.12;
@@ -488,10 +845,12 @@ for (let i = 0; i < 2; i++) {
         return;
       }
     }
-    const local = piano.worldToLocal(p.clone());
-    const onFallboard = Math.abs(local.x) <= OUTER / 2 && local.z > -0.1 && local.z < 0.02 && local.y > -0.03 && local.y < 0.16;
-    // Keep the grab point under your fingers, so grabbing the middle brings the middle to you.
-    if (onFallboard) drag = { i, local };
+    for (const { obj, test } of grabbables) {
+      if (!obj.visible) continue;
+      const local = obj.worldToLocal(p.clone());
+      // Keep the grab point under your fingers, so grabbing the middle brings the middle to you.
+      if (test(local)) { drag = { i, local, obj }; return; }
+    }
   });
   ctrl.addEventListener('selectend', () => {
     if (drag?.i === i) drag = null;
@@ -615,10 +974,54 @@ function updateGuitar(pose, dt) {
   }
 }
 
+// ---------- Hand menu each frame: show it while the left palm faces you, poke buttons with the right index
+const mWrist = new THREE.Vector3(), mIndex = new THREE.Vector3(), mPinky = new THREE.Vector3(), palm = new THREE.Vector3();
+const mCentre = new THREE.Vector3(), toHead = new THREE.Vector3(), pokeTip = new THREE.Vector3(), pokeLocal = new THREE.Vector3();
+let menuCooldown = 0;
+function updateMenu() {
+  const li = handIndex('left'), ri = handIndex('right');
+  const joints = li >= 0 && renderer.xr.getController(li).userData.isHand && renderer.xr.getHand(li).joints;
+  let facing = 0;
+  if (joints && ['wrist', 'index-finger-metacarpal', 'pinky-finger-metacarpal'].every(n => joints[n]?.visible)) {
+    joints.wrist.getWorldPosition(mWrist);
+    joints['index-finger-metacarpal'].getWorldPosition(mIndex);
+    joints['pinky-finger-metacarpal'].getWorldPosition(mPinky);
+    mCentre.copy(mWrist).add(mIndex).add(mPinky).divideScalar(3);
+    // pinky × index points out of the left palm (index × pinky is the back of the hand: checked in the emulator)
+    palm.crossVectors(mPinky.sub(mWrist), mIndex.sub(mWrist)).normalize();
+    facing = palm.dot(toHead.subVectors(view.pos, mCentre).normalize());
+  }
+  menu.visible = menu.visible ? facing > 0.35 : facing > 0.6; // hysteresis: no flicker at the edge
+  if (!menu.visible) return;
+  menu.position.copy(mCentre).addScaledVector(palm, 0.07).addScaledVector(upward, 0.1);
+  menu.lookAt(view.pos);
+  menu.updateMatrixWorld();
+  const tipJoint = ri >= 0 && renderer.xr.getHand(ri).joints['index-finger-tip'];
+  const tipSeen = tipJoint?.visible && tipJoint.getWorldPosition(pokeTip);
+  const now = performance.now();
+  for (const item of MENU) {
+    let touching = false;
+    if (tipSeen) {
+      item.mesh.worldToLocal(pokeLocal.copy(pokeTip));
+      touching = Math.abs(pokeLocal.x) < BTN_W / 2 && Math.abs(pokeLocal.y) < BTN_H / 2 && pokeLocal.z < 0.015 && pokeLocal.z > -0.025;
+    }
+    if (touching && !item.touching && now > menuCooldown) {
+      item.act();
+      menuCooldown = now + 400;
+    }
+    item.touching = touching;
+    item.mesh.position.z = touching ? -0.004 : 0;
+    item.mat.emissiveIntensity = item.on() ? 0.8 : touching ? 0.3 : 0;
+  }
+}
+
 // ---------- Loop
 let last = 0, placed = false;
 renderer.xr.addEventListener('sessionstart', () => { placed = false; held.hand = -1; guitarFree = false; });
-if (window.xrDevice) window.app = { THREE, renderer, piano, guitar, held, keys, pads, strings, getChord: () => chord }; // handle for emulator.html tests
+if (window.xrDevice) { // handle for emulator.html tests
+  window.app = { THREE, renderer, camera, piano, guitar, held, keys, pads, strings, bars, marimba, thereminRig, menu, MENU, guide,
+    getChord: () => chord, getVoice: () => thereminVoice, view };
+}
 const head = new THREE.Vector3(), fwd = new THREE.Vector3(), quat = new THREE.Quaternion();
 const p = new THREE.Vector3(), tmp = new THREE.Vector3();
 
@@ -627,6 +1030,13 @@ renderer.setAnimationLoop((t, frame) => {
   last = t;
 
   const pose = frame?.getViewerPose(renderer.xr.getReferenceSpace());
+  if (pose) {
+    view.pos.copy(pose.transform.position);
+    view.quat.copy(pose.transform.orientation);
+  } else {
+    view.pos.copy(camera.position);
+    view.quat.copy(camera.quaternion);
+  }
   if (pose) {
     head.copy(pose.transform.position);
     if (!placed) {
@@ -641,30 +1051,46 @@ renderer.setAnimationLoop((t, frame) => {
     }
     if (drag && !pinchPos(drag.i, p)) drag = null;
     if (drag) {
-      // Turn smoothly towards you instead of snapping every frame, so the piano does not swing in your hand.
-      const want = Math.atan2(head.x - piano.position.x, head.z - piano.position.z);
-      const turn = Math.atan2(Math.sin(want - piano.rotation.y), Math.cos(want - piano.rotation.y));
-      piano.rotation.y += turn * Math.min(1, dt * 4);
-      piano.position.copy(p).sub(tmp.copy(drag.local).applyQuaternion(piano.quaternion));
+      // Turn smoothly towards you instead of snapping every frame, so it does not swing in your hand.
+      const obj = drag.obj;
+      const want = Math.atan2(head.x - obj.position.x, head.z - obj.position.z);
+      const turn = Math.atan2(Math.sin(want - obj.rotation.y), Math.cos(want - obj.rotation.y));
+      obj.rotation.y += turn * Math.min(1, dt * 4);
+      obj.position.copy(p).sub(tmp.copy(drag.local).applyQuaternion(obj.quaternion));
     }
     updateOccluders();
   }
-  lacquer.emissive.setHex(drag ? 0x0a1a33 : 0x000000); // the case glows while you carry it
+  lacquer.emissive.setHex(drag?.obj === piano ? 0x0a1a33 : 0x000000); // the case glows while you carry it
   for (const pad of pads) {
     if (pad.play) pad.glow = Math.max(0, pad.glow - dt * 4);
     pad.mat.emissiveIntensity = pad.play ? Math.max(0.06, pad.glow) : pad.on ? 1 : 0.1;
   }
-  piano.updateMatrixWorld();
+  for (const bar of bars) {
+    bar.glow = Math.max(0, bar.glow - dt * 3);
+    bar.mesh.material.emissiveIntensity = bar.glow * 0.5;
+  }
+  for (const { space } of playables) space.updateMatrixWorld();
+  thereminRig.updateMatrixWorld();
   updateGuitar(pose, dt);
+  updateTheremin();
+  updateGuide();
+  updateMenu();
 
   for (const probe of probes) {
     let key = null, speed = 0;
     if (probe.pos(p)) {
-      piano.worldToLocal(p);
-      // While carrying the piano your fingers brush the keys: play nothing until you let go.
-      key = drag ? null : keyAt(targets, p.x, p.y, p.z, probe.key);
-      speed = Math.max(0, (probe.lastY ?? p.y) - p.y) / dt;
+      speed = Math.max(0, (probe.lastY ?? p.y) - p.y) / dt; // downward speed: every playing surface is level
       probe.lastY = p.y;
+      // While carrying something your fingers brush the keys: play nothing until you let go.
+      if (!drag) {
+        for (const inst of playables) {
+          const list = inst.list();
+          if (!list.length) continue;
+          inst.space.worldToLocal(tmp.copy(p));
+          key = keyAt(list, tmp.x, tmp.y, tmp.z, list.includes(probe.key) ? probe.key : undefined);
+          if (key) break;
+        }
+      }
     } else probe.lastY = undefined;
     if (key !== probe.key) {
       if (probe.key) release(probe.key);

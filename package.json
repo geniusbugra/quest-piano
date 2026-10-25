@@ -2,5 +2,5 @@
   "name": "quest-piano",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node keys.test.js && node guitar.test.js" }
+  "scripts": { "test": "node keys.test.js && node guitar.test.js && node songs.test.js" }
 }

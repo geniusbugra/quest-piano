@@ -1,26 +1,47 @@
-# Quest Piano: a hands-only MIDI keyboard for Meta Quest 3
+# Quest Piano: a hands-only music studio for Meta Quest 3
 
-**Play a real-size, 88-key piano on your desk with your bare hands, and use it as a MIDI keyboard in FL Studio or any DAW. No controllers, no install.**
+**Five instruments in your real room: a real-size 88-key piano with drum pads, a guitar you hold, a marimba and a theremin. You play all of them with your bare hands, they can teach you songs, and they drive FL Studio or any DAW over MIDI. No controllers, no install.**
 
-Quest Piano is a mixed reality instrument built around Quest's hand tracking. The keyboard appears in your real room through passthrough. You can place it on a real table and play it with all ten fingers. Every key you press can go straight into your music software as MIDI.
+Quest Piano is a mixed reality music app built around Quest's hand tracking. Instruments appear in your room through passthrough. You switch them on and off from a menu on your palm, carry them anywhere, and play them the way you would play the real thing.
 
-## Why it is different
+## Instruments
 
-- **Hands only, end to end.** It is designed for Quest's current hand tracking (Hand Tracking 2.x). Every fingertip of both hands is a key probe, so chords, runs and two-handed playing work. Controllers are optional.
-- **Velocity from your fingers.** How fast your fingertip comes down sets how loud the note is, like a real piano action.
-- **Real size, real feel.** 88 keys (A0–C8) at true piano dimensions. The keys pivot like a real action. A sampled grand piano plays through the headset.
-- **Your hands stay in front.** Depth-only hand occluders let your real fingers render over the virtual keys, so you see your own hands on the keyboard.
-- **Put it where you play.** Pinch anywhere on the back panel to carry the piano onto a real desk. It always turns to face you.
-- **Drum pads and effect switches.** Eight light-up drum pads sit next to the keys. Four touch switches turn on reverb, delay, a lo-fi filter and a sustain pedal.
-- **A guitar you hold in your hands.** It is a real-size dreadnought with real fret spacing. Pinch the neck to play: slide that hand along the neck to change chords (D, Em, F, Am, G, C) and strum the strings with your other hand. Pinch the body to carry it anywhere. Let go and it stays where you left it. The string sound is synthesized with Karplus-Strong.
-- **A MIDI controller for any DAW.** Piano on channel 1, guitar on channel 2, drums on channel 10 (General MIDI), sustain as CC64. A small desktop bridge opens a virtual MIDI input called "Quest Piyano". FL Studio, Ableton Live, Reaper and others see it as a regular keyboard.
-- **No install on the headset.** It runs in the Quest browser with WebXR. You open a link and play.
+| Instrument | How you play it |
+|------------|-----------------|
+| **Piano**, 88 keys (A0–C8) at true size | Play with all ten fingers. Velocity comes from how fast each fingertip comes down, and the keys pivot like a real action. The sound is a sampled grand piano. |
+| **Drum pads and effects** | Eight light-up drum pads beside the keys. Four switches turn on reverb, delay, a lo-fi filter and a sustain pedal; the effects apply to every instrument. |
+| **Guitar**, a real-size dreadnought | Pinch the neck to play. Slide that hand along the neck to change chords (D, Em, F, Am, G, C) and strum with your other hand. Each string is detected separately. Karplus-Strong string synthesis. |
+| **Marimba**, A3–C6 | Strike the rosewood bars from above. Brass resonators sit under the bars. |
+| **Theremin** | Played without touching. Move your right hand towards the antenna for higher notes; it snaps to semitones so it stays in tune. Raise your left hand over the loop for more volume. |
+
+## Hands first, everywhere
+
+- **Palm menu.** Turn your left palm towards your face and a menu appears above it. Poke the buttons with your right index finger to show or hide instruments, start the song guide, pick a song, or bring everything to you. Instruments appear in their own spots in a half circle around you, so they never pile up.
+- **Carry anything.** Pinch the piano's back panel, the marimba's end boards, the theremin's cabinet or the guitar's body. The grab point stays under your fingers, the instrument turns to face you, and it stays where you let go. Nothing plays while you carry it.
+- **Your hands stay in front.** Depth-only capsules along every finger bone let your real fingers show over the virtual instruments.
+- **Tuned on an emulated Quest.** Grab zones are sized from the measured pinch point. The pinch fires while the fingers are still closing, about 7 cm off the surface.
+
+## Learn songs
+
+Turn on **SONG GUIDE** and the piano lights up the next keys in green; the step after that glows faintly. Play them to move on, and a wrong key flashes red. A panel on the piano shows your progress. Built-in songs: Twinkle Twinkle, Ode to Joy, Für Elise, Frère Jacques and Jingle Bells. **LOAD MIDI SONG** loads any MIDI file you have; chords are grouped automatically.
+
+## A MIDI controller for any DAW
+
+| Channel | Instrument |
+|---------|------------|
+| 1 | Piano (sustain switch = CC64) |
+| 2 | Guitar |
+| 3 | Theremin |
+| 4 | Marimba |
+| 10 | Drums (General MIDI notes) |
+
+A small desktop bridge opens a virtual MIDI input called "Quest Piyano". FL Studio, Ableton Live, Reaper and others see it as a regular keyboard.
 
 ## Try it
 
-**Headset only (built-in piano sound):** open **https://geniusbugra.github.io/quest-piano/** in the Quest browser and press **START AR**.
+**Headset only:** open **https://geniusbugra.github.io/quest-piano/** in the Quest browser and press **START AR**. The toolbar at the top of the page (instruments, song guide, LOAD MIDI SONG) works before you enter AR too.
 
-**As a MIDI keyboard for your DAW (Windows):**
+**As a MIDI controller for your DAW (Windows):**
 
 1. Install [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html). Its driver provides the virtual MIDI port.
 2. Run `python midi_bridge.py`. You need Python 3.12+ and `pip install websockets`. This serves the app and creates the "Quest Piyano" MIDI input.
@@ -34,15 +55,17 @@ Quest Piano is a mixed reality instrument built around Quest's hand tracking. Th
 |------|------|
 | Key layout and fingertip hit test with hysteresis | `keys.js` |
 | Guitar chords, strum detection, Karplus-Strong string | `guitar.js` |
-| WebXR scene, hand probes, velocity, occluders, sound, MIDI out | `main.js` |
+| Marimba bar layout, theremin pitch and volume mapping | `instruments.js` |
+| Built-in songs, Standard MIDI File reader | `songs.js` |
+| WebXR scene, instruments, palm menu, hand probes, occluders, sound, MIDI out | `main.js` |
 | Static server + WebSocket → virtual MIDI port (teVirtualMIDI) | `midi_bridge.py` |
 
-Built with three.js (WebXR) and the Web Audio API. The bridge accepts only well-formed note on/off and control change messages.
+It is built with three.js (WebXR) and the Web Audio API, and runs at about 120 draw calls and 40k triangles per frame with everything on. Fixed foveated rendering is enabled. The bridge accepts only well-formed note on/off and control change messages.
 
 ## Tests
 
-- `npm test` checks the key layout, the fingertip hit logic, guitar chords, strum detection and the string synth.
-- `emulator.html` runs the app on a desktop browser inside Meta's Immersive Web Emulator, an emulated Quest 3 with hand tracking. Drive `window.xrDevice` (hands, pinch) from the console to test grabbing, playing, strumming and carrying without a headset.
+- `npm test` covers the key layout, fingertip hit logic, guitar chords, strum detection, string synth, songs, the MIDI file reader, marimba layout and theremin mapping.
+- `emulator.html` runs the app in Meta's Immersive Web Emulator, an emulated Quest 3 with hand tracking. Drive `window.xrDevice` (hands, pinch) from the console. Every interaction in this README was tested this way: the palm menu, playing, strumming, the theremin, the song guide and carrying. Keep the browser tab visible, since a hidden tab stalls XR frames.
 - `python midi_bridge_test.py` (while the bridge runs) listens on the MIDI port like a DAW and checks that notes arrive and junk is dropped.
 
 ## Credits
