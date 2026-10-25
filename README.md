@@ -16,7 +16,7 @@ Quest Piano is a mixed reality instrument built around Quest's hand tracking. Th
 
 ## Try it
 
-**Headset only (built-in piano sound):** open the hosted link in the Quest browser and press **START AR**.
+**Headset only (built-in piano sound):** open **https://geniusbugra.github.io/quest-piano/** in the Quest browser and press **START AR**.
 
 **As a MIDI keyboard for your DAW (Windows):**
 
