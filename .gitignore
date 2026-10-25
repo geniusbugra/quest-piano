@@ -1,0 +1,4 @@
+*.pem
+__pycache__/
+LINKEDIN.md
+SUBMISSION.md
