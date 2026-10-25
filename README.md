@@ -12,7 +12,7 @@ Quest Piano is a mixed reality instrument built around Quest's hand tracking. Th
 - **Your hands stay in front.** Depth-only hand occluders let your real fingers render over the virtual keys, so you see your own hands on the keyboard.
 - **Put it where you play.** Pinch anywhere on the back panel to carry the piano onto a real desk. It always turns to face you.
 - **Drum pads and effect switches.** Eight light-up drum pads sit next to the keys. Four touch switches turn on reverb, delay, a lo-fi filter and a sustain pedal.
-- **A guitar you hold in your hands.** Pinch the guitar's neck to pick it up. Slide your neck hand along it to change chords (C, G, Am, F, Em, D) and strum the strings with your other hand. The string sound is synthesized with Karplus-Strong. To put the guitar down, hold a pinch for one second.
+- **A guitar you hold in your hands.** It is a real-size dreadnought with real fret spacing. Pinch the neck to play: slide that hand along the neck to change chords (D, Em, F, Am, G, C) and strum the strings with your other hand. Pinch the body to carry it anywhere. Let go and it stays where you left it. The string sound is synthesized with Karplus-Strong.
 - **A MIDI controller for any DAW.** Piano on channel 1, guitar on channel 2, drums on channel 10 (General MIDI), sustain as CC64. A small desktop bridge opens a virtual MIDI input called "Quest Piyano". FL Studio, Ableton Live, Reaper and others see it as a regular keyboard.
 - **No install on the headset.** It runs in the Quest browser with WebXR. You open a link and play.
 
@@ -42,6 +42,7 @@ Built with three.js (WebXR) and the Web Audio API. The bridge accepts only well-
 ## Tests
 
 - `npm test` checks the key layout, the fingertip hit logic, guitar chords, strum detection and the string synth.
+- `emulator.html` runs the app on a desktop browser inside Meta's Immersive Web Emulator, an emulated Quest 3 with hand tracking. Drive `window.xrDevice` (hands, pinch) from the console to test grabbing, playing, strumming and carrying without a headset.
 - `python midi_bridge_test.py` (while the bridge runs) listens on the MIDI port like a DAW and checks that notes arrive and junk is dropped.
 
 ## Credits

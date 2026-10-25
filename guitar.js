@@ -1,8 +1,10 @@
 // Chord-mode guitar. Guitar-local space: x runs from the sound hole (0) up the neck, strings lie
 // across y, z points out of the top. The neck hand picks a chord by how far up the neck it is,
 // the other hand strums across the strings over the sound hole.
-export const STRING_Y = [0, 1, 2, 3, 4, 5].map(s => (s - 2.5) * 0.01); // low E first, 1 cm apart
-export const NECK_START = 0.3, ZONE = 0.075; // chord zones start 30 cm up the neck, 7.5 cm each
+export const STRING_Y = [0, 1, 2, 3, 4, 5].map(s => (s - 2.5) * 0.009); // low E first, 9 mm apart
+// Real acoustic proportions: saddle at x = -0.2, nut at x = 0.445 (645 mm scale), body ends at x = 0.17.
+export const SADDLE = -0.2, NUT = 0.445, SCALE = NUT - SADDLE;
+export const NECK_START = 0.17, ZONE = (NUT - NECK_START) / 6; // six chord zones along the free neck
 
 // MIDI note per string (low E to high E); null = string not played. Nearest the body first.
 export const CHORDS = [

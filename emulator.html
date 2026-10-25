@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quest Piano (emulator)</title>
+  <style>body { margin: 0; background: #111; overflow: hidden; }</style>
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "iwer": "https://cdn.jsdelivr.net/npm/iwer@2.5.0/build/iwer.module.js"
+    } }
+  </script>
+</head>
+<body>
+  <!-- Desktop test page: Meta's Immersive Web Emulator stands in for a Quest 3 with hand tracking.
+       Drive window.xrDevice (head, hands, pinch) from the console; window.app exposes the scene. -->
+  <script type="module">
+    import { XRDevice, metaQuest3 } from 'iwer';
+    const xrDevice = new XRDevice(metaQuest3);
+    xrDevice.installRuntime({ forceInstall: true }); // desktop Chrome has its own (non-AR) WebXR
+    xrDevice.primaryInputMode = 'hand';
+    window.xrDevice = xrDevice;
+    await import('./main.js');
+  </script>
+</body>
+</html>
