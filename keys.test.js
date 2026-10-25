@@ -13,4 +13,7 @@ assert.equal(keyAt(keys, key(60).x, 0.05, 0.13), null, 'hovering above');
 assert.equal(keyAt(keys, key(60).x, -0.05, 0.13), null, 'under the piano');
 assert.equal(keyAt(keys, key(60).x, 0.01, 0.13), null, 'just above the surface');
 assert.equal(keyAt(keys, key(60).x, 0.01, 0.13, key(60))?.midi, 60, 'held key keeps its margin');
+const pad = { pad: true, x: -1, z: 0.1, width: 0.05, length: 0.05, top: 0.012 };
+assert.equal(keyAt([...keys, pad], -1, 0.012, 0.12), pad, 'pad hit inside its own z range');
+assert.equal(keyAt([...keys, pad], -1, 0.012, 0.05), null, 'pad not hit in front of its back edge');
 console.log('keys ok');

@@ -44,8 +44,9 @@ async def midi(ws):
             status, note, velocity = json.loads(msg)
         except (ValueError, TypeError):
             continue
-        # The tunnel is public: accept nothing but well-formed note on/off.
-        if status in (0x80, 0x90) and all(isinstance(v, int) and 0 <= v < 128 for v in (note, velocity)):
+        # The tunnel is public: accept nothing but well-formed note on/off and control change (sustain), any channel.
+        if (isinstance(status, int) and 0 <= status < 256 and status & 0xF0 in (0x80, 0x90, 0xB0)
+                and all(isinstance(v, int) and 0 <= v < 128 for v in (note, velocity))):
             vm.virtualMIDISendData(port, bytes([status, note, velocity]), 3)
     print("Quest disconnected", flush=True)
 

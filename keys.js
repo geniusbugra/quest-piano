@@ -17,8 +17,10 @@ export function buildKeys(low, high) {
   return keys;
 }
 
+// Keys start at z = 0; other targets (e.g. drum pads) give their own back edge in `z`.
 function inside(k, x, y, z, margin) {
-  return Math.abs(x - k.x) <= k.width / 2 + margin && z >= -margin && z <= k.length + margin
+  const z0 = k.z || 0;
+  return Math.abs(x - k.x) <= k.width / 2 + margin && z >= z0 - margin && z <= z0 + k.length + margin
     && y <= k.top + TIP + margin && y >= k.top - DEPTH - margin;
 }
 
